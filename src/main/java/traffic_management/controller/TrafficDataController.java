@@ -1,3 +1,4 @@
+
 package traffic_management.controller;
 
 import java.util.List;
@@ -14,8 +15,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import traffic_management.entity.PredictionHistory;
 import traffic_management.entity.TrafficData;
 import traffic_management.ml.RandomForestModel;
+import traffic_management.repository.PredictionHistoryRepository;
 import traffic_management.service.TrafficDataService;
 
 @RestController
@@ -25,92 +28,84 @@ public class TrafficDataController {
 
     private final TrafficDataService service;
     private final RandomForestModel randomForestModel;
+    private final PredictionHistoryRepository historyRepository;
 
     public TrafficDataController(
             TrafficDataService service,
-            RandomForestModel randomForestModel) {
-
+            RandomForestModel randomForestModel,
+            PredictionHistoryRepository historyRepository) {
         this.service = service;
         this.randomForestModel = randomForestModel;
+        this.historyRepository = historyRepository;
     }
 
-    // GET all traffic data
     @GetMapping
     public List<TrafficData> getAllTrafficData() {
         return service.getAllTrafficData();
     }
 
-    // GET traffic data by ID
     @GetMapping("/{id}")
     public ResponseEntity<TrafficData> getTrafficDataById(
             @PathVariable Long id) {
-
-        return ResponseEntity.ok(
-                service.getTrafficDataById(id)
-        );
+        return ResponseEntity.ok(service.getTrafficDataById(id));
     }
 
-    // CREATE traffic data
     @PostMapping
     public ResponseEntity<TrafficData> createTrafficData(
             @RequestBody TrafficData trafficData) {
-
-        return ResponseEntity.ok(
-                service.saveTrafficData(trafficData)
-        );
+        return ResponseEntity.ok(service.saveTrafficData(trafficData));
     }
 
-    // UPDATE traffic data
     @PutMapping("/{id}")
     public ResponseEntity<TrafficData> updateTrafficData(
             @PathVariable Long id,
             @RequestBody TrafficData trafficData) {
-
         return ResponseEntity.ok(
-                service.updateTrafficData(id, trafficData)
-        );
+                service.updateTrafficData(id, trafficData));
     }
 
-    // DELETE traffic data
     @DeleteMapping("/{id}")
     public ResponseEntity<String> deleteTrafficData(
             @PathVariable Long id) {
-
         service.deleteTrafficData(id);
-
-        return ResponseEntity.ok(
-                "Traffic data deleted successfully"
-        );
+        return ResponseEntity.ok("Traffic data deleted successfully");
     }
 
-    // RANDOM FOREST TRAFFIC RISK PREDICTION
+    // Predict risk and save input + output to MySQL
     @PostMapping("/predict")
     public ResponseEntity<Map<String, Object>> predictTraffic(
             @RequestBody Map<String, Double> input) {
 
-        double vehicleSpeed =
-                input.get("vehicleSpeed");
+        double vehicleSpeed = input.get("vehicleSpeed");
+        double trafficDensity = input.get("trafficDensity");
+        double accidentCount = input.get("accidentCount");
 
-        double trafficDensity =
-                input.get("trafficDensity");
+        String riskLevel = randomForestModel.predict(
+                vehicleSpeed,
+                trafficDensity,
+                accidentCount
+        );
 
-        double accidentCount =
-                input.get("accidentCount");
+        if ("MODEL_NOT_READY".equals(riskLevel)) {
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Prediction model is not ready"));
+        }
 
-        String riskLevel =
-                randomForestModel.predict(
-                        vehicleSpeed,
-                        trafficDensity,
-                        accidentCount
-                );
+        PredictionHistory history = new PredictionHistory();
+        history.setVehicleSpeed(vehicleSpeed);
+        history.setTrafficDensity(trafficDensity);
+        history.setAccidentCount(accidentCount);
+        history.setRiskLevel(riskLevel);
 
-        Map<String, Object> response = Map.of(
+        PredictionHistory saved = historyRepository.save(history);
+
+        return ResponseEntity.ok(Map.of(
+                "id", saved.getId(),
                 "vehicleSpeed", vehicleSpeed,
                 "trafficDensity", trafficDensity,
                 "accidentCount", accidentCount,
-                "riskLevel", riskLevel
-        );
-
-        return ResponseEntity.ok(response);
+                "riskLevel", riskLevel,
+                "createdAt", saved.getCreatedAt()
+        ));
     }
 }
